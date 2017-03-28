@@ -116,7 +116,7 @@ static voidpf file_build_ioposix(FILE *file, const char *filename)
     FILE_IOPOSIX *ioposix = NULL;
     if (file == NULL)
         return NULL;
-    ioposix = (FILE_IOPOSIX*)malloc(sizeof(FILE_IOPOSIX));
+    ioposix = (FILE_IOPOSIX*)(sizeof(FILE_IOPOSIX));
     ioposix->file = file;
     ioposix->filenameLength = (int)strlen(filename) + 1;
     ioposix->filename = (char*)malloc(ioposix->filenameLength * sizeof(char));
@@ -367,3 +367,119 @@ void fill_fopen64_filefunc (zlib_filefunc64_def* pzlib_filefunc_def)
     pzlib_filefunc_def->zerror_file = ferror_file_func;
     pzlib_filefunc_def->opaque = NULL;
 }
+
+
+static uLong ZCALLBACK fread_memfile_func (voidpf opaque, voidpf stream, void* buf, uLong size)
+{
+    zlib_memeory_file *ioposix = NULL;
+    if (stream == NULL)
+        return -1;
+    ioposix = (zlib_memeory_file*)stream;
+    if (size + ioposix->seek_pos <= ioposix->length) {
+        memcpy(buf, ioposix->seek, size);
+        ioposix->seek_pos += size;
+        ioposix->seek += size;
+        return size;
+    } else {
+        return -1;
+    }
+}
+
+static long ZCALLBACK fseek64_memfile_func (voidpf opaque, voidpf stream, ZPOS64_T offset, int origin)
+{
+    zlib_memeory_file *ioposix = NULL;
+    long ret = 0;
+    
+    if (stream == NULL)
+        return -1;
+    ioposix = (zlib_memeory_file*)stream;
+    
+    switch (origin)
+    {
+        case ZLIB_FILEFUNC_SEEK_CUR:
+            if (ioposix->seek_pos + offset > ioposix->length) {
+                ret = -1;
+            } else {
+                ioposix->seek = ioposix->seek + offset;
+                ioposix->seek_pos = ioposix->seek_pos + offset;
+                ret = 0;
+            }
+            break;
+        case ZLIB_FILEFUNC_SEEK_END:
+            if (offset > ioposix->length) {
+                ret = -1;
+            } else {
+                ioposix->seek_pos = (ioposix->length - offset);
+                ioposix->seek = ioposix->data + ioposix->seek_pos;
+                ret = 0;
+            }
+            break;
+        case ZLIB_FILEFUNC_SEEK_SET:
+            if (offset > ioposix->length) {
+                ret = -1;
+            } else {
+                ioposix->seek_pos = offset;
+                ioposix->seek = ioposix->data + ioposix->seek_pos;
+                ret = 0;
+            }
+            break;
+        default:
+            return -1;
+    }
+    return ret;
+}
+
+static int ZCALLBACK fclose_memfile_func (voidpf opaque, voidpf stream)
+{
+    zlib_memeory_file *ioposix = NULL;
+    int ret = -1;
+    if (stream == NULL)
+        return ret;
+    ioposix = (zlib_memeory_file*)stream;
+    if (ioposix->data != NULL && ioposix->need_free_data) {
+        free(ioposix->data);
+    }
+    free(ioposix);
+    ret = 0;
+    return ret;
+}
+
+static int ZCALLBACK ferror_memfile_func (voidpf opaque, voidpf stream)
+{
+    zlib_memeory_file *ioposix = NULL;
+    int ret = -1;
+    if (stream == NULL)
+        return ret;
+    ioposix = (zlib_memeory_file*)stream;
+    if (ioposix->length > 0) {
+        ret = 0;
+    }
+    return ret;
+}
+
+static ZPOS64_T ZCALLBACK ftell64_memfile_func (voidpf opaque, voidpf stream)
+{
+    zlib_memeory_file *ioposix = NULL;
+    ZPOS64_T ret = -1;
+    if (stream == NULL)
+        return ret;
+    ioposix = (zlib_memeory_file*)stream;
+    return ioposix->seek_pos;
+}
+
+void file_memeory64_filefunc (zlib_filefunc64_def* pzlib_filefunc_def)
+{
+    pzlib_filefunc_def->zopen64_file = NULL;
+    pzlib_filefunc_def->zopendisk64_file = NULL;
+    pzlib_filefunc_def->zread_file = fread_memfile_func;
+    pzlib_filefunc_def->zwrite_file = NULL;
+    pzlib_filefunc_def->ztell64_file = ftell64_memfile_func;
+    pzlib_filefunc_def->zseek64_file = fseek64_memfile_func;
+    pzlib_filefunc_def->zclose_file = fclose_memfile_func;
+    pzlib_filefunc_def->zerror_file = ferror_memfile_func;
+    pzlib_filefunc_def->opaque = NULL;
+}
+
+
+
+

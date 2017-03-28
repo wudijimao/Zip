@@ -231,6 +231,154 @@ public class Zip {
         
     }
     
+    
+    public class func unzipData(_ data: NSData, destination: URL, overwrite: Bool, password: String?, progress: ((_ progress: Double) -> ())?) throws {
+        
+        // File manager
+        let fileManager = FileManager.default
+        
+        if data.length <= 0 {
+            throw ZipError.unzipFail
+        }
+        
+        // Unzip set up
+        var ret: Int32 = 0
+        var crc_ret: Int32 = 0
+        let bufferSize: UInt32 = 4096
+        var buffer = Array<CUnsignedChar>(repeating: 0, count: Int(bufferSize))
+        
+        // Progress handler set up
+        var totalSize: Double = 0.0
+        var currentPosition: Double = 0.0
+//        let fileAttributes = try fileManager.attributesOfItem(atPath: path)
+//        if let attributeFileSize = fileAttributes[FileAttributeKey.size] as? Double {
+//            totalSize += attributeFileSize
+//        }
+        
+        let progressTracker = Progress(totalUnitCount: Int64(totalSize))
+        progressTracker.isCancellable = false
+        progressTracker.isPausable = false
+        progressTracker.kind = ProgressKind.file
+        
+        // Begin unzipping
+        let zip = unzOpenMem(data.bytes, UInt(data.length));
+        defer {
+            unzClose(zip)
+        }
+        if unzGoToFirstFile(zip) != UNZ_OK {
+            throw ZipError.unzipFail
+        }
+        repeat {
+            if let cPassword = password?.cString(using: String.Encoding.ascii) {
+                ret = unzOpenCurrentFilePassword(zip, cPassword)
+            }
+            else {
+                ret = unzOpenCurrentFile(zip);
+            }
+            if ret != UNZ_OK {
+                throw ZipError.unzipFail
+            }
+            var fileInfo = unz_file_info64()
+            memset(&fileInfo, 0, MemoryLayout<unz_file_info>.size)
+            ret = unzGetCurrentFileInfo64(zip, &fileInfo, nil, 0, nil, 0, nil, 0)
+            if ret != UNZ_OK {
+                unzCloseCurrentFile(zip)
+                throw ZipError.unzipFail
+            }
+            currentPosition += Double(fileInfo.compressed_size)
+            let fileNameSize = Int(fileInfo.size_filename) + 1
+            //let fileName = UnsafeMutablePointer<CChar>(allocatingCapacity: fileNameSize)
+            let fileName = UnsafeMutablePointer<CChar>.allocate(capacity: fileNameSize)
+            
+            unzGetCurrentFileInfo64(zip, &fileInfo, fileName, UInt(fileNameSize), nil, 0, nil, 0)
+            fileName[Int(fileInfo.size_filename)] = 0
+            
+            var pathString = String(cString: fileName)
+            
+            guard pathString.characters.count > 0 else {
+                throw ZipError.unzipFail
+            }
+            
+            var isDirectory = false
+            let fileInfoSizeFileName = Int(fileInfo.size_filename-1)
+            if (fileName[fileInfoSizeFileName] == "/".cString(using: String.Encoding.utf8)?.first || fileName[fileInfoSizeFileName] == "\\".cString(using: String.Encoding.utf8)?.first) {
+                isDirectory = true;
+            }
+            free(fileName)
+            if pathString.rangeOfCharacter(from: CharacterSet(charactersIn: "/\\")) != nil {
+                pathString = pathString.replacingOccurrences(of: "\\", with: "/")
+            }
+            
+            let fullPath = destination.appendingPathComponent(pathString).path
+            
+            let creationDate = Date()
+            let directoryAttributes = [FileAttributeKey.creationDate.rawValue : creationDate,
+                                       FileAttributeKey.modificationDate.rawValue : creationDate]
+            do {
+                if isDirectory {
+                    try fileManager.createDirectory(atPath: fullPath, withIntermediateDirectories: true, attributes: directoryAttributes)
+                }
+                else {
+                    let parentDirectory = (fullPath as NSString).deletingLastPathComponent
+                    try fileManager.createDirectory(atPath: parentDirectory, withIntermediateDirectories: true, attributes: directoryAttributes)
+                }
+            } catch {}
+            if fileManager.fileExists(atPath: fullPath) && !isDirectory && !overwrite {
+                unzCloseCurrentFile(zip)
+                ret = unzGoToNextFile(zip)
+            }
+            var filePointer: UnsafeMutablePointer<FILE>?
+            filePointer = fopen(fullPath, "wb")
+            while filePointer != nil {
+                let readBytes = unzReadCurrentFile(zip, &buffer, bufferSize)
+                if readBytes > 0 {
+                    fwrite(buffer, Int(readBytes), 1, filePointer)
+                }
+                else {
+                    break
+                }
+            }
+            
+            fclose(filePointer)
+            crc_ret = unzCloseCurrentFile(zip)
+            if crc_ret == UNZ_CRCERROR {
+                throw ZipError.unzipFail
+            }
+            
+            //Set file permissions from current fileInfo
+            if fileInfo.external_fa != 0 {
+                let permissions = (fileInfo.external_fa >> 16) & 0x1FF
+                //We will devifne a valid permission range between Owner read only to full access
+                if permissions >= 0o400 && permissions <= 0o777 {
+                    do {
+                        try fileManager.setAttributes([.posixPermissions : permissions], ofItemAtPath: fullPath)
+                    } catch {
+                        print("Failed to set permissions to file \(fullPath), error: \(error)")
+                    }
+                }
+            }
+            
+            ret = unzGoToNextFile(zip)
+            
+            // Update progress handler
+            if let progressHandler = progress{
+                progressHandler((currentPosition/totalSize))
+            }
+            
+            progressTracker.completedUnitCount = Int64(currentPosition)
+            
+        } while (ret == UNZ_OK && ret != UNZ_END_OF_LIST_OF_FILE)
+        
+        // Completed. Update progress handler.
+        if let progressHandler = progress{
+            progressHandler(1.0)
+        }
+        
+        progressTracker.completedUnitCount = Int64(totalSize)
+        
+    }
+    
+    
     // MARK: Zip
     
     

@@ -138,7 +138,7 @@ typedef struct zlib_filefunc64_def_s
 
 void fill_fopen_filefunc OF((zlib_filefunc_def* pzlib_filefunc_def));
 void fill_fopen64_filefunc OF((zlib_filefunc64_def* pzlib_filefunc_def));
-
+void file_memeory64_filefunc OF((zlib_filefunc64_def* pzlib_filefunc_def));
 /* now internal definition, only for zip.c and unzip.h */
 typedef struct zlib_filefunc64_32_def_s
 {
@@ -168,6 +168,16 @@ void fill_zlib_filefunc64_32_def_from_filefunc32 OF((zlib_filefunc64_32_def* p_f
 #define ZTELL64(filefunc,filestream)                (call_ztell64((&(filefunc)),(filestream)))
 #define ZSEEK64(filefunc,filestream,pos,mode)       (call_zseek64((&(filefunc)),(filestream),(pos),(mode)))
 
+typedef struct {
+    unsigned long length;
+    char *data;
+    char *seek;
+    unsigned long seek_pos;
+    int need_free_data;//1:true 0:flase
+} zlib_memeory_file;
+
+    
+    
 #ifdef __cplusplus
 }
 #endif
